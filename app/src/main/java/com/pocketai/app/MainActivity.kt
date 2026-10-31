@@ -2,8 +2,13 @@ package com.pocketai.app
 
 import android.app.Activity
 import android.app.ActivityManager
-import android.os.Bundle
+import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Color
+import android.os.BatteryManager
+import android.os.Build
+import android.os.Bundle
+import android.os.StatFs
 import android.view.Gravity
 import android.view.View
 import android.widget.Button
@@ -15,13 +20,16 @@ import android.widget.Toast
 class MainActivity : Activity() {
 
     private lateinit var ramText: TextView
-    private lateinit var deviceText: TextView
+    private lateinit var storageText: TextView
+    private lateinit var batteryText: TextView
+    private lateinit var cpuText: TextView
 
-    private val background = Color.rgb(16, 19, 27)
-    private val panel = Color.rgb(28, 36, 52)
-    private val white = Color.rgb(242, 245, 252)
-    private val muted = Color.rgb(167, 176, 194)
-    private val blue = Color.rgb(139, 184, 255)
+    private val background = Color.rgb(10, 14, 22)
+    private val panel = Color.rgb(22, 30, 42)
+    private val white = Color.rgb(240, 244, 255)
+    private val muted = Color.rgb(166, 180, 200)
+    private val blue = Color.rgb(121, 177, 255)
+    private val green = Color.rgb(103, 218, 163)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -41,39 +49,46 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
         }
 
-        content.addView(title("PocketAI", 30, white))
-        content.addView(subtitle("YOUR LOCAL AI CONTROL CENTER"))
-        content.addView(space(24))
+        content.addView(title("PocketAI", 30f, white))
+        content.addView(subtitle("YOUR PHONE. YOUR MODELS. YOUR API."))
+        content.addView(space(22))
 
         content.addView(section("SERVER STATUS"))
         content.addView(card {
-            addView(title("Offline", 27, white))
+            addView(title("Offline", 27f, white))
             addView(subtitle("Your local AI server is not running yet."))
-            addView(space(12))
-            addView(subtitle("API server will be implemented in Stage 5."))
+            addView(space(10))
+            addView(subtitle("This app is ready for Stage 3+ local inference and API server work."))
         })
 
         content.addView(space(20))
         content.addView(section("DEVICE RESOURCES"))
-
         content.addView(card {
             addView(subtitle("AVAILABLE RAM"))
-            ramText = title("--", 26, blue)
+            ramText = title("--", 24f, blue)
             addView(ramText)
-            addView(space(8))
-            deviceText = subtitle("Reading device information...")
-            addView(deviceText)
+            addView(space(12))
+
+            addView(subtitle("STORAGE"))
+            storageText = title("--", 18f, white)
+            addView(storageText)
+            addView(space(12))
+
+            addView(subtitle("BATTERY"))
+            batteryText = title("--", 18f, green)
+            addView(batteryText)
+            addView(space(12))
+
+            addView(subtitle("CPU / PLATFORM"))
+            cpuText = title("--", 16f, white)
+            addView(cpuText)
             addView(space(12))
 
             val refresh = Button(this@MainActivity).apply {
                 text = "Refresh device information"
                 setOnClickListener {
                     refreshDeviceInfo()
-                    Toast.makeText(
-                        this@MainActivity,
-                        "Device information updated",
-                        Toast.LENGTH_SHORT
-                    ).show()
+                    Toast.makeText(this@MainActivity, "Device information updated", Toast.LENGTH_SHORT).show()
                 }
             }
             addView(refresh)
@@ -82,22 +97,24 @@ class MainActivity : Activity() {
         content.addView(space(20))
         content.addView(section("MODEL MANAGER"))
         content.addView(card {
-            addView(title("No model loaded", 20, white))
-            addView(subtitle("GGUF model support is planned for Stage 2."))
+            addView(title("No model loaded", 20f, white))
+            addView(subtitle("GGUF support is planned for the next development stage."))
+            addView(space(12))
+            addView(subtitle("Model folder: /storage/emulated/0/PocketAI/models"))
         })
 
         content.addView(space(20))
         content.addView(section("QUICK ACTIONS"))
         content.addView(card {
-            addView(title("Local AI Chat", 18, white))
-            addView(subtitle("Coming in Stage 4"))
-            addView(space(12))
-            addView(title("API Manager", 18, white))
-            addView(subtitle("Coming in Stage 5"))
+            addView(title("Local AI Chat", 18f, white))
+            addView(subtitle("Coming after the model engine is ready."))
+            addView(space(10))
+            addView(title("API Manager", 18f, white))
+            addView(subtitle("HTTP server setup is scheduled for later stages."))
         })
 
-        content.addView(space(28))
-        content.addView(subtitle("POCKETAI  •  VERSION 0.1.0"))
+        content.addView(space(26))
+        content.addView(subtitle("PocketAI  •  VERSION 0.1.0"))
 
         scroll.addView(content)
         root.addView(scroll)
@@ -105,21 +122,53 @@ class MainActivity : Activity() {
     }
 
     private fun refreshDeviceInfo() {
-        val manager = getSystemService(ACTIVITY_SERVICE) as ActivityManager
+        val manager = getSystemService(ActivityManager::class.java) as ActivityManager
         val memory = ActivityManager.MemoryInfo()
         manager.getMemoryInfo(memory)
 
-        ramText.text = "${memory.availMem / (1024 * 1024)} MB"
+        val totalRamMb = memory.totalMem / (1024L * 1024L)
+        val availableRamMb = memory.availMem / (1024L * 1024L)
+        ramText.text = "${availableRamMb} MB free / ${totalRamMb} MB total"
 
-        val total = memory.totalMem / (1024 * 1024)
-        deviceText.text = "Available system memory • Total: ${total} MB"
+        val storageTextValue = buildStorageSummary()
+        storageText.text = storageTextValue
+
+        batteryText.text = readBatteryStatus()
+        cpuText.text = buildCpuSummary()
     }
 
-    private fun title(
-        text: String,
-        size: Float,
-        color: Int
-    ) = TextView(this).apply {
+    private fun buildStorageSummary(): String {
+        val appDir = filesDir
+        val statFs = StatFs(appDir.absolutePath)
+
+        val totalBytes = statFs.blockCountLong * statFs.blockSizeLong
+        val availableBytes = statFs.availableBytes
+        val usedBytes = totalBytes - availableBytes
+
+        val totalGb = totalBytes / (1024L * 1024L * 1024L)
+        val usedGb = usedBytes / (1024L * 1024L * 1024L)
+        return "${usedGb} GB used / ${totalGb} GB total"
+    }
+
+    private fun readBatteryStatus(): String {
+        val batteryIntent = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        val level = batteryIntent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+        val scale = batteryIntent?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
+
+        return if (level >= 0 && scale > 0) {
+            val percent = (level * 100f / scale).toInt()
+            "$percent% battery"
+        } else {
+            "Battery unavailable"
+        }
+    }
+
+    private fun buildCpuSummary(): String {
+        val abi = Build.SUPPORTED_ABIS.firstOrNull() ?: "Unknown"
+        return "Android ${Build.VERSION.RELEASE} • ${abi}"
+    }
+
+    private fun title(text: String, size: Float, color: Int) = TextView(this).apply {
         this.text = text
         textSize = size
         setTextColor(color)
@@ -146,9 +195,7 @@ class MainActivity : Activity() {
         )
     }
 
-    private fun card(
-        content: LinearLayout.() -> Unit
-    ) = LinearLayout(this).apply {
+    private fun card(content: LinearLayout.() -> Unit) = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         setBackgroundColor(panel)
         setPadding(16, 18, 16, 18)
